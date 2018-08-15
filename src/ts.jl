@@ -9,6 +9,22 @@ end
 # TYPE DEFINITION ##############################################################
 ################################################################################
 
+function identify_lowest_type(T::Type)::Type
+    print(T)
+    if !isa(T, Union)
+        return T
+    end
+    if T <: Union{Missing, Any}
+        if T.a == Missing
+            return identify_lowest_type(T.b)
+        else
+            return identify_lowest_type(T.a)
+        end
+    else
+        return T
+    end
+end
+
 abstract type AbstractTS end
 
 @doc """
@@ -17,24 +33,49 @@ Time series type aimed at efficiency and simplicity.
 Motivated by the `xts` package in R and the `pandas` package in Python.
 """ ->
 mutable struct TS{V<:Real,T<:TimeType}
-    values::Matrix{V}
+    values::Matrix{Union{Missing, V}}
     index::Vector{T}
     fields::Vector{Symbol}
-    function TS{V,T}(values::AbstractArray{V}, index::AbstractVector{T}, fields::Vector{Symbol}) where {V<:Real,T<:TimeType}
+    function TS{V,T}(values::AbstractArray{V},
+                     index::AbstractVector{T},
+                     fields::Vector{Symbol}) where {V<:Union{Any,Union{Missing,Any}}, T<:TimeType}
         @assert size(values,1)==length(index) "Length of index not equal to number of value rows."
         @assert size(values,2)==length(fields) "Length of fields not equal to number of columns in values."
         order = sortperm(index)
-        return new(values[order,:], index[order], SANITIZE_NAMES ? namefix.(fields) : fields)
+        lowtype = identify_lowest_type(eltype(values))
+        return new(convert(Matrix{Union{Missing,lowtype}}, values)[order,:],
+                   index[order],
+                   SANITIZE_NAMES ? namefix.(fields) : fields)
     end
 end
 
-TS(v::AbstractArray{V}, t::AbstractVector{T}, f::Union{Symbol,String,Char}) where {V,T} = TS{V,T}(v, t, [Symbol(f)])
-TS(v::AbstractArray{V}, t::AbstractVector{T}, f::Union{AbstractVector{Symbol},AbstractVector{String},AbstractVector{Char}}) where {V,T} = TS{V,T}(v, t, Symbol.(f))
-TS(v::AbstractArray{V}, t::AbstractVector{T}) where {V,T} = TS{V,T}(v, t, autocol(1:size(v,2)))
-TS(v::AbstractArray{V}, t::T, f) where {V,T} = TS{V,T}(v, [t], f)
-TS(v::V, t::AbstractVector{T}, f) where {V,T} = TS{V,T}([v], t, f)
-TS(v::V, t::T, f) where {V,T} = TS{V,T}([v][:,:], [t], f)
-TS(v::V, t::T) where {V,T} = TS{V,T}([v], [t], [:A])
+TS(v::AbstractArray{V},
+   t::AbstractVector{T},
+   f::Union{Symbol,String,Char}) where {V,T} = TS{V,T}(v, t, [Symbol(f)])
+
+TS(v::AbstractArray{V},
+   t::AbstractVector{T},
+   f::Union{AbstractVector{Symbol},
+            AbstractVector{String},
+            AbstractVector{Char}}) where {V,T} = TS(v, t, Symbol.(f))
+
+TS(v::AbstractArray{V},
+   t::AbstractVector{T}) where {V,T} = TS{V,T}(v, t, autocol(1:size(v,2)))
+
+TS(v::AbstractArray{V},
+   t::T, f) where {V,T} = TS{V,T}(v, [t], f)
+
+TS(v::V,
+   t::AbstractVector{T},
+   f) where {V,T} = TS{V,T}([v], t, f)
+
+TS(v::V,
+   t::T,
+   f) where {V,T} = TS{V,T}([v][:,:], [t], f)
+
+TS(v::V,
+   t::T) where {V,T} = TS{V,T}([v], [t], [:A])
+
 TS(v::AbstractArray{V}) where {V} = TS{V,Date}(v, autoidx(size(v,1)), autocol(1:size(v,2)))
 TS() = TS{Float64,Date}(Matrix{Float64}(UndefInitializer(),0,0), Date[], Symbol[])
 
@@ -62,5 +103,5 @@ first(x::TS) = x[1]
 last(x::TS) = x[end]
 ndims(::TS) = 2
 float(x::TS) = ts(float(x.values), x.index, x.fields)
-eltype(x::TS) = eltype(x.values)
+eltype(x::TS{V}) where {V} = eltype(V)
 copy(x::TS) = TS(x.values, x.index, x.fields)
